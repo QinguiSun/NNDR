@@ -1,5 +1,10 @@
-# SDRF preprocessing, from https://github.com/jctops/understanding-oversquashing
+"""SDRF pre-processing, from https://github.com/jctops/understanding-oversquashing
 
+This module implements the Stochastic Discrete Ricci Flow (SDRF) algorithm
+for graph rewiring. The method is based on Forman-Ricci curvature and aims
+to add/remove edges to improve graph properties. The implementation is adapted
+from the original source code.
+"""
 from numba import jit, prange
 import numpy as np
 import torch
@@ -8,17 +13,21 @@ from torch_geometric.utils import (
     from_networkx,
 )
 
+
 def softmax(a, tau=1):
+    """Computes the softmax of a numpy array."""
     exp_a = np.exp(a * tau)
     return exp_a / exp_a.sum()
 
+
 @jit(nopython=True)
 def _balanced_forman_curvature(A, A2, d_in, d_out, N, C):
+    """Core JIT-compiled function to compute balanced Forman curvature."""
     for i in prange(N):
         for j in prange(N):
             if A[i, j] == 0:
                 C[i, j] = 0
-                break
+                continue
 
             if d_in[i] > d_out[j]:
                 d_max = d_in[i]
@@ -29,7 +38,7 @@ def _balanced_forman_curvature(A, A2, d_in, d_out, N, C):
 
             if d_max * d_min == 0:
                 C[i, j] = 0
-                break
+                continue
 
             sharp_ij = 0
             lambda_ij = 0
@@ -57,6 +66,16 @@ def _balanced_forman_curvature(A, A2, d_in, d_out, N, C):
 
 
 def balanced_forman_curvature(A, C=None):
+    """Computes the balanced Forman curvature for a given adjacency matrix.
+
+    Args:
+        A (np.ndarray): The adjacency matrix of the graph.
+        C (np.ndarray, optional): A pre-allocated matrix to store the
+                                  curvature values. Defaults to None.
+
+    Returns:
+        np.ndarray: A matrix containing the Forman curvature for each edge.
+    """
     N = A.shape[0]
     A2 = np.matmul(A, A)
     d_in = A.sum(axis=0)
@@ -72,6 +91,7 @@ def balanced_forman_curvature(A, C=None):
 def _balanced_forman_post_delta(
     A, A2, d_in_x, d_out_y, N, D, x, y, i_neighbors, j_neighbors, dim_i, dim_j
 ):
+    """Core JIT-compiled function to compute curvature changes."""
     for I in prange(dim_i):
         for J in prange(dim_j):
             i = i_neighbors[I]
@@ -79,24 +99,26 @@ def _balanced_forman_post_delta(
 
             if (i == j) or (A[i, j] != 0):
                 D[I, J] = -1000
-                break
+                continue
 
             # Difference in degree terms
+            d_in_x_new = d_in_x
+            d_out_y_new = d_out_y
             if j == x:
-                d_in_x += 1
-            elif i == y:
-                d_out_y += 1
+                d_in_x_new += 1
+            if i == y:
+                d_out_y_new += 1
 
-            if d_in_x * d_out_y == 0:
+            if d_in_x_new * d_out_y_new == 0:
                 D[I, J] = 0
-                break
+                continue
 
-            if d_in_x > d_out_y:
-                d_max = d_in_x
-                d_min = d_out_y
+            if d_in_x_new > d_out_y_new:
+                d_max = d_in_x_new
+                d_min = d_out_y_new
             else:
-                d_max = d_out_y
-                d_min = d_in_x
+                d_max = d_out_y_new
+                d_min = d_in_x_new
 
             # Difference in triangles term
             A2_x_y = A2[x, y]
@@ -150,6 +172,20 @@ def _balanced_forman_post_delta(
 
 
 def balanced_forman_post_delta(A, x, y, i_neighbors, j_neighbors, D=None):
+    """Computes the change in Forman curvature after adding an edge.
+
+    Args:
+        A (np.ndarray): Adjacency matrix.
+        x (int): Source node of the edge with minimum curvature.
+        y (int): Target node of the edge with minimum curvature.
+        i_neighbors (list): Neighbors of x.
+        j_neighbors (list): Neighbors of y.
+        D (np.ndarray, optional): Pre-allocated matrix to store the results.
+                                  Defaults to None.
+
+    Returns:
+        np.ndarray: Matrix of curvature changes.
+    """
     N = A.shape[0]
     A2 = np.matmul(A, A)
     d_in = A[:, x].sum()
@@ -182,14 +218,37 @@ def sdrf(
     tau=1,
     is_undirected=False
 ):
+    """Performs SDRF graph rewiring.
+
+    This function iteratively adds edges with low Forman curvature and removes
+    edges with high Forman curvature.
+
+    Args:
+        data (Data): The input graph in PyG Data format.
+        loops (int, optional): The number of rewiring iterations.
+                               Defaults to 10.
+        remove_edges (bool, optional): Whether to remove edges.
+                                       Defaults to True.
+        removal_bound (float, optional): Curvature threshold for removing
+                                         edges. Defaults to 0.5.
+        tau (int, optional): Temperature parameter for softmax sampling of
+                             edges to add. Defaults to 1.
+        is_undirected (bool, optional): Whether the graph is undirected.
+                                        Defaults to False.
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: A tuple containing the new edge
+                                           index and edge types.
+    """
     N = data.x.shape[0]
     A = np.zeros(shape=(N, N))
     m = data.edge_index.shape[1]
 
-    if not "edge_type" in data.keys:
+    if "edge_type" not in data.keys():
         edge_type = np.zeros(m, dtype=int)
     else:
-        edge_type = data.edge_type
+        edge_type = data.edge_type.numpy()
+
     if is_undirected:
         for i, j in zip(data.edge_index[0], data.edge_index[1]):
             if i != j:
@@ -204,12 +263,15 @@ def sdrf(
         G = G.to_undirected()
     C = np.zeros((N, N))
 
-    for x in range(loops):
+    for _ in range(loops):
         can_add = True
         balanced_forman_curvature(A, C=C)
+        # Find edge with minimum curvature
         ix_min = C.argmin()
         x = ix_min // N
         y = ix_min % N
+
+        # Find candidate edges to add
         if is_undirected:
             x_neighbors = list(G.neighbors(x)) + [x]
             y_neighbors = list(G.neighbors(y)) + [y]
@@ -221,10 +283,12 @@ def sdrf(
             for j in y_neighbors:
                 if (i != j) and (not G.has_edge(i, j)):
                     candidates.append((i, j))
+
         if len(candidates):
+            # Compute curvature improvements and sample an edge to add
             D = balanced_forman_post_delta(A, x, y, x_neighbors, y_neighbors)
             improvements = []
-            for (i, j) in candidates:
+            for i, j in candidates:
                 improvements.append(
                     (D - C[x, y])[x_neighbors.index(i), y_neighbors.index(j)]
                 )
@@ -247,6 +311,7 @@ def sdrf(
                 break
 
         if remove_edges:
+            # Find edge with maximum curvature and remove it
             ix_max = C.argmax()
             x = ix_max // N
             y = ix_max % N
@@ -256,7 +321,7 @@ def sdrf(
                     A[x, y] = A[y, x] = 0
                 else:
                     A[x, y] = 0
-            else:
-                if can_add is False:
-                    break
+            elif not can_add:
+                break
+
     return from_networkx(G).edge_index, torch.tensor(edge_type)
