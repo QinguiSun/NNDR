@@ -1,8 +1,20 @@
+"""Command-line argument parser for experiments.
+
+This module defines the command-line arguments that can be used to configure
+and run the GNN experiments. It uses argparse to parse the arguments and
+returns them in an AttrDict for easy access.
+"""
 import argparse
 import ast
 from attrdict import AttrDict
 
+
 def get_args_from_input():
+	"""Parses command-line arguments for the experiments.
+
+	Returns:
+		AttrDict: A dictionary-like object containing the parsed arguments.
+	"""
 	parser = argparse.ArgumentParser(description='modify network parameters', argument_default=argparse.SUPPRESS)
 
 	parser.add_argument('--learning_rate', metavar='', type=float, help='learning rate')

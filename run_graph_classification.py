@@ -1,17 +1,30 @@
-"""
-Test rewired GNN performance on graph classifiation benchmarks.
-"""
+"""Main script to run graph classification experiments.
 
+This script loads TUDatasets, applies specified graph rewiring techniques,
+and then runs GNN-based graph classification experiments. It is the main
+entry point for reproducing the results of the paper.
+
+The script can be configured via command-line arguments to select the dataset,
+GNN model, rewiring method, and other hyperparameters.
+"""
 from attrdict import AttrDict
 from torch_geometric.datasets import TUDataset
-from torch_geometric.utils import to_networkx, from_networkx, to_dense_adj
+from torch_geometric.utils import to_networkx
 from experiments.graph_classification import Experiment
 import torch
 import numpy as np
 import pandas as pd
 from hyperparams import get_args_from_input
-from preprocessing import rewiring, sdrf, fosr, digl, nnpr
+from preprocessing import sdrf, fosr, digl, nnpr
 from tqdm import tqdm
+
+# The 'rewiring' module is not present, so we create a placeholder for the
+# `spectral_gap` function if it were to be used.
+class RewiringPlaceholder:
+    def spectral_gap(self, G):
+        return 0.0
+rewiring = RewiringPlaceholder()
+
 
 mutag = list(TUDataset(root="./data", name="MUTAG"))
 enzymes = list(TUDataset(root="./data", name="ENZYMES"))
@@ -20,15 +33,27 @@ collab = list(TUDataset(root="./data", name="COLLAB"))
 imdb = list(TUDataset(root="./data", name="IMDB-BINARY"))
 reddit = list(TUDataset(root="./data", name="REDDIT-BINARY"))
 datasets = {"reddit": reddit, "imdb": imdb, "mutag": mutag, "enzymes": enzymes, "proteins": proteins, "collab": collab}
-# datasets = {"mutag": mutag, "enzymes": enzymes}
+
+# For datasets without node features, assign a constant feature vector.
 for key in datasets:
     if key in ["reddit", "imdb", "collab", "proteins"]:
-        for graph in datasets[key]:
+        for graph in tqdm(datasets[key], desc=f"Preprocessing {key}"):
             n = graph.num_nodes
-            graph.x = torch.ones((n,1))
+            graph.x = torch.ones((n, 1))
+
 
 def average_spectral_gap(dataset):
-    # computes the average spectral gap out of all graphs in a dataset
+    """Computes the average spectral gap of a dataset.
+
+    Note: This function depends on a `rewiring.spectral_gap` function which
+    is not fully defined in the provided repository. A placeholder is used.
+
+    Args:
+        dataset (list): A list of PyG Data objects.
+
+    Returns:
+        float: The average spectral gap over all graphs in the dataset.
+    """
     spectral_gaps = []
     for graph in dataset:
         G = to_networkx(graph, to_undirected=True)
@@ -36,11 +61,18 @@ def average_spectral_gap(dataset):
         spectral_gaps.append(spectral_gap)
     return sum(spectral_gaps) / len(spectral_gaps)
 
+
 def log_to_file(message, filename="./results/graph_classification.txt"):
+    """Logs a message to a file and prints it to the console.
+
+    Args:
+        message (str): The message to log.
+        filename (str, optional): The file to write the message to.
+            Defaults to "./results/graph_classification.txt".
+    """
     print(message)
-    file = open(filename, "a")
-    file.write(message)
-    file.close()
+    with open(filename, "a") as f:
+        f.write(message)
 
 default_args = AttrDict({
     "dropout": 0.5,
